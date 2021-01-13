@@ -1,0 +1,206 @@
+---
+title: "Whole genome metagenomic analysis of the gut microbiome in HIV-1 infected individuals on antiretroviral therapy"
+author: "Aswathy Narayanan"
+date: "January 11, 2021"
+output: pdf_document
+---
+
+
+## Pre-processing
+
+```{perl}
+trim_galore --length 30 -q 30 --paired --dont_gzip *_R1.fastq.gz *_R2.fastq.gz --gzip  #For adapter trimming & removing low quality reads
+```
+
+```{bash}
+# Removal of host DNA
+bowtie2 -x Homo -1 *R1.fq -2 *R2.fq -S *.sam # Homo is bowtie2-index human reference genome
+samtools view -bS *.sam > *.bam
+samtools view -b -f 4 *.bam > *unmapped.bam
+samtools sort -n *unmapped.bam -o *unmapped_sorted.bam
+bedtools bamtofastq -i *unmapped_sorted.bam -fq *unmapped_r1.fastq -fq2 *unmapped_r2.fastq
+```
+
+## Taxonomy profiling
+
+```{python}
+# Taxonomy Profiling
+metaphlan2.py *unmapped_R1.fastq,*unmapped_R2.fastq --input_type fastq --bowtie2db mpa_v20_m200 --ignore_viruses --ignore_eukaryotes --ignore_archaea  > output1.txt
+merge_metaphlan_tables.py output*.txt > merged_abundance_table.txt # For merging multiple output files
+```
+
+## Functional Profiling
+
+```{python}
+# Functional Profiling using HUManN2
+humann2 --input *unmapped.fastq --output Result --threads 10 --metaphlan-options "--input_type fastq --bowtie2db mpa_v20_m200"
+```
+
+## Microbiome Gene richness assessemnet 
+
+```{bash}
+bwa mem IGC.fa.gz *unmapped_r1.fastq *unmapped_r2.fastq > *.sam # IGC.fa.gz - IGC database
+samtools view -b -S *.sam > *.bam  
+samtools sort *.bam -o *_sorted.bam
+samtools idxstats *_sorted.bam > *_igc.txt
+```
+
+## Virulence genes and Anti Microbial resistance genes assessement
+
+```{bash}
+bowtie2 -x card -1 *unmapped_r1.fastq -2 *unmapped_r2.fastq --no-unal -S *.sam # card is bowtie2-index CARD reference database
+# For virulence genes, bowtie2-index of Virulence database (VFDB) were used.
+samtools view -b -S *.sam > *.bam  
+samtools sort *.bam -o *_sorted.bam
+samtools idxstats *_sorted.bam > *_igc.txt
+```
+
+# Rarefaction curve 
+
+```{r setup, include=FALSE}
+# Rarefaction curve to quantify the sequencing depth of bacterial species, antimicrobial resistance genes, virulence genes and microbial gene richness.
+library(phyloseq)
+ASV<- read.delim("otu.txt", check.names=FALSE, row.names=1)
+taxmat<- read.delim("tax.txt", check.names=FALSE, row.names=1)
+taxonomy=as.matrix(taxmat)	
+TAX = tax_table(taxonomy)
+otumat<-data.matrix(ASV, rownames.force = NA)
+OTU = otu_table(otumat, taxa_are_rows = TRUE)
+sample=read.delim("meta.txt",check.names=FALSE,row.names=1)
+Sample=sample_data(sample)
+physeq=phyloseq(OTU,TAX,Sample)
+library(vegan)
+col <- c("#ef4f91","#363b74")
+set.seed(3)
+grp =factor(sample_data(physeq)$group)
+cols <- col[grp]
+rarecurve(t(otu_table(physeq)), step=1, cex=0.7,ylab = "Genes",xlab = "Sequencing depth (number of reads)", label=FALSE,col=cols)
+```
+
+# Alpha diversity analysis and Box Plot
+```{r setup, include=FALSE}
+library(phyloseq)
+ASV<- read.delim("otu.txt", check.names=FALSE, row.names=1)
+taxmat<- read.delim("tax.txt", check.names=FALSE, row.names=1)
+taxonomy=as.matrix(taxmat)	
+TAX = tax_table(taxonomy)
+otumat<-data.matrix(ASV, rownames.force = NA)
+OTU = otu_table(otumat, taxa_are_rows = TRUE)
+sample=read.delim("meta.txt",check.names=FALSE,row.names=1)
+Sample=sample_data(sample)
+physeq=phyloseq(OTU,TAX,Sample)
+otu_table(physeq) <- otu_table(round(as((otu_table(physeq)), "matrix")), taxa_are_rows(physeq))
+richness=estimate_richness(physeq, split = TRUE, measures = c("Observed","Shannon"))
+
+library(reshape)
+library(ggplot2)
+library(ggpubr)
+data=read.delim("alpha.txt",check.names=FALSE)
+dat=melt(data)
+ggplot(dat, aes(x = samples, y = value)) + geom_boxplot(aes(fill = samples), alpha = 0.95, outlier.shape=NA) + facet_wrap(~variable,scale="free",nrow=1) + theme_bw() + theme(strip.text.x = element_text(size = 13), axis.title.x=element_blank(), axis.text.x=element_blank(),axis.ticks.x=element_blank(),axis.title.y=element_blank(), legend.text=element_text(size=7, family="Times"),plot.title = element_text(size = 10),legend.title=element_blank()) + scale_fill_manual(values=c("#ff8364","#5ca0d3")) + stat_compare_means(method="wilcox.test",paired = FALSE,label = "p.format")
+```
+
+# NMDS Plot
+
+```{r setup, include=FALSE}
+library(phyloseq)
+ASV<- read.delim("otu.txt", check.names=FALSE, row.names=1)
+taxmat<- read.delim("tax.txt", check.names=FALSE, row.names=1)
+taxonomy=as.matrix(taxmat)	
+TAX = tax_table(taxonomy)
+otumat<-data.matrix(ASV, rownames.force = NA)
+OTU = otu_table(otumat, taxa_are_rows = TRUE)
+sample=read.delim("meta.txt",check.names=FALSE,row.names=1)
+Sample=sample_data(sample)
+physeq=phyloseq(OTU,TAX,Sample)
+sample_data(physeq)[ , 2] <- sample_data(physeq)[ ,1]
+ps.prop <- transform_sample_counts(physeq, function(otu) otu/sum(otu))
+ord.nmds.bray <- ordinate(ps.prop, method="NMDS", distance="bray")
+allGroupsColors<- c("#ff8364","#5ca0d3")
+plot_ordination(ps.prop, ord.nmds.bray, color="Group", title="Bray NMDS")+ geom_point(size = 3.5)+ scale_color_manual(values = allGroupsColors)+ scale_shape_manual(values = c(19, 1)) + theme_bw()
+```
+
+# Lefse and LDA plot
+```{python}
+format_input.py Input.txt Input_LDA.in -c 1 -s 2 -u 3 -o 1000000
+run_lefse.py Input_LDA.in output_LDA.res -a 0.05
+```
+
+```{r setup, include=FALSE}
+library(ggplot2)
+data=read.delim("lda_output.txt",check.names=FALSE) 
+ggplot(data=data, aes(x= factor(x, levels=unique(x)), 
+y=LDA, fill=Group))+geom_bar(stat="identity")+coord_flip()+theme(axis.title.y=element_blank(),plot.title = element_text(hjust = 0.5), plot.margin = unit(c(3,3,3,3), "cm"))+ ggtitle("Control-vs-Case") + scale_fill_manual(values = c("#eeba30","#008000")) + ylab("LDA Score (log10)")
+```
+
+# Correlation analysis
+```{r setup, include=FALSE}
+data1=read.delim("table1.txt",check.names=FALSE)
+data2=read.delim("table2.txt",check.names=FALSE)
+dat1=as.matrix(data1)
+dat2=as.matrix(data2)
+library(psych)
+correlation=corr.test(dat1,dat2,use = "pairwise",method="spearman",adjust="none")
+write.table(Res$r,file="Correlation_value_table.txt",sep="\t",quote=FALSE)
+write.table(Res$p,file="Pvalue_table.txt",sep="\t",quote=FALSE)
+
+library(corrplot)
+data=read.delim("Correlation_plot.txt", check.names=FALSE,row.names = 1)
+dat=as.matrix(data)
+corrplot(dat, is.corr=FALSE,method="color",cl.lim=c(-0.8,0.8),outline = T,tl.cex=0.9, col=colorRampPalette(c("#9fcc2e","white","red"))(200))
+```
+
+# Figure 2 
+
+```{r setup, include=FALSE}
+## Figure 2a
+
+library(scales)
+library(ggpubr)
+library(ggplot2)
+data1<-read.delim("Kit_plot1.txt", check.names=FALSE)
+data2<-read.delim("Kit_plot2.txt", check.names=FALSE)
+data3<-read.delim("Kit_plot3.txt", check.names=FALSE)
+plot1=ggplot(data1, aes(x = Extraction_method, y = Concentration,color=Extraction_method)) + geom_boxplot(aes(fill = Extraction_method), outlier.shape=NA)+ geom_point(position=position_jitterdodge(),size=2)+ theme_bw()+ theme(axis.text.x=element_text(angle=90,hjust = 1))+theme(axis.title.x=element_blank(),axis.text.x=element_blank(),axis.ticks.x=element_blank(),axis.title.y=element_blank()) + labs(fill = "Extraction Method")+ scale_fill_manual(values=c("#3366ff","#ff9a00","#3366ff","#ff9a00", "#3366ff","#ff9a00"))+ scale_color_manual(values=c("#0c457d","#ff7400","#0c457d","#ff7400","#0c457d","#ff7400"))+ stat_compare_means(label="p.format",label.x = 1.5, label.y = 600)
+plot2=ggplot(data2, aes(x = Extraction_method, y = value,color=Extraction_method)) + geom_boxplot(aes(fill = Extraction_method), outlier.shape=NA)+ geom_point(position=position_jitterdodge(),size=2)+ theme_bw()+ theme(axis.text.x=element_text(angle=90,hjust = 1))+theme(axis.title.x=element_blank(),axis.text.x=element_blank(),axis.ticks.x=element_blank(),axis.title.y=element_blank(),legend.position = "none")+ scale_fill_manual(values=c("#3366ff","#ff9a00","#3366ff","#ff9a00","#3366ff","#ff9a00"))+ scale_color_manual(values=c("#0c457d","#ff7400","#0c457d","#ff7400","#0c457d","#ff7400"))+ stat_compare_means(label="p.format",label.x = 1.5)
+plot3=ggplot(data3, aes(x = Extraction_method, y = DNA_Integrity_Number,color=Extraction_method)) + geom_boxplot(aes(fill = Extraction_method), outlier.shape=NA)+ geom_point(position=position_jitterdodge(),size=2)+ theme_bw()+ theme(axis.text.x=element_text(angle=90,hjust = 1))+theme(axis.title.x=element_blank(), axis.text.x=element_blank(),axis.ticks.x=element_blank(),axis.title.y=element_blank(),legend.position = "none")+ scale_fill_manual(values=c("#3366ff","#ff9a00","#3366ff","#ff9a00","#3366ff","#ff9a00"))+ scale_color_manual(values=c("#0c457d","#ff7400","#0c457d","#ff7400","#0c457d","#ff7400"))+ stat_compare_means(label="p.format",label.x = 1.5)
+ggarrange(plot1,plot2, plot3, nrow = 1, ncol=3 )
+```
+
+```{r setup, include=FALSE}
+## Figure 2b
+library(ggplot2)
+library(ggplot2)
+library(reshape)
+data<- read.delim("Taxonomy_stats.txt", check.names=FALSE)
+head(data)
+dat=melt(data,id="sample")
+head(dat)
+colors=c("#375E97","#FB6542","#3F681C","#FFBB00")
+ggplot(dat, aes(y=value, x=sample,fill=variable))+ geom_bar( stat="identity")+ scale_x_discrete(expand=c(0,0)) + scale_y_continuous(expand=c(0,0))+ labs(fill="Kingdom",x="Samples",y="No: of Reads")+ scale_fill_manual(values=colors)+theme(axis.text.x= element_text(size=10,angle=90)) + coord_flip()
+```
+
+# Figure 3
+
+```{python}
+## Figure 3a
+export2graphlan.py -i merged_abundance_table.txt --annotations 5,6  --skip_rows 1,2  --tree tree.txt --annotation annotation.txt
+graphlan_annotate.py --annot annotation.txt tree.txt Plot.xml
+graphlan.py Plot.xml Plot.pdf --dpi 500 --size 15
+```
+
+```{r setup, include=FALSE}
+## Figure 3b
+
+library(gplots)
+library("RColorBrewer")
+data=read.delim("Species_heatmap.txt",check.names=FALSE)
+rnames <- data[,1]
+mat_data <- data.matrix(data[,2:ncol(data)])
+rownames(mat_data) <- rnames
+sampleinfo <- read.delim("Meta.txt")
+col.cell <- c("#ff8364","#5ca0d3")[sampleinfo$Group]
+my_palette <- colorRampPalette(c("#a50026","#d73027","#f46d43","#fdae61","#fee090","#ffffbf","#e0f3f8","#abd9e9","#74add1","#4575b4","#313695"))(n=50)
+heatmap.2(mat_data,tracecol=NA, ColSideColors =col.cell,col=my_palette,cexCol=0.5,cexRow=0.7,keysize = 1,key.title = NULL,hclustfun = hclust,scale = "row",margins =c(11,19))
+```
+
