@@ -1,1 +1,1 @@
-# Shortgun-metagenome-sequencing-analysis
+# Shotgun-metagenome-sequencing-analysis
