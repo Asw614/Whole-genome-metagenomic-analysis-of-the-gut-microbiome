@@ -1,1 +1,1 @@
-# Shotgun-metagenome-sequencing-analysis
+# Whole genome metagenomic analysis of the gut microbiome
