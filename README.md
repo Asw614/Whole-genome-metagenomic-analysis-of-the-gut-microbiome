@@ -1,4 +1,5 @@
-# Whole-genome-metagenomic-analysis-of-the-gut-microbiome
+# Whole genome metagenomic analysis of the gut microbiome
+
 The codes used for the whole genome sequencing analysis of the gut microbiome from the HIV infected individuals.
 
 ## Aim
