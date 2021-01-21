@@ -27,7 +27,7 @@ The aim of the project is to establish shotgun metagenomics workflow to analyze 
 1. Python (version >= 3.7).
 2. R packages.
 
-Please click [here](https://https://github.com/biobakery/humann) for HUManN2 requirements.
+Please click [here](https://github.com/biobakery/humann) for HUManN2 requirements.
 
 
 ```
